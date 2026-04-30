@@ -7,6 +7,8 @@ interface Props {
   height?: number;
   showFrontier: boolean;
   showTargets: boolean;
+  draftPolygon?: {x: number, y: number}[];
+  onCanvasClick?: (gx: number, gy: number) => void;
 }
 
 // Height -> color (blue -> teal -> yellow -> orange -> red)
@@ -43,6 +45,8 @@ export default function YardCanvas({
   height = 600,
   showFrontier,
   showTargets,
+  draftPolygon,
+  onCanvasClick,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const offRef = useRef<HTMLCanvasElement | null>(null);
@@ -182,6 +186,52 @@ export default function YardCanvas({
     // border
     ctx.strokeStyle = "rgba(255,255,255,0.15)";
     ctx.strokeRect(0.5, 0.5, width - 1, height - 1);
+
+    // Draw polygons
+    const drawPoly = (poly: {x: number, y: number}[], strokeStyle: string, fillStyle: string) => {
+      if (!poly || poly.length === 0) return;
+      ctx.strokeStyle = strokeStyle;
+      ctx.lineWidth = 2;
+      ctx.fillStyle = fillStyle;
+      ctx.beginPath();
+      ctx.moveTo(sx(poly[0].x), sy(poly[0].y));
+      for (let i = 1; i < poly.length; i++) {
+        ctx.lineTo(sx(poly[i].x), sy(poly[i].y));
+      }
+      ctx.closePath();
+      ctx.stroke();
+      ctx.fill();
+    };
+
+    if (state.polygon && state.polygon.length > 0) {
+      drawPoly(state.polygon, "rgba(255, 150, 50, 0.6)", "rgba(255, 150, 50, 0.05)");
+    }
+    if (draftPolygon && draftPolygon.length > 0) {
+      drawPoly(draftPolygon, "rgba(50, 200, 255, 0.8)", "rgba(50, 200, 255, 0.1)");
+      // draw points
+      ctx.fillStyle = "rgba(50, 200, 255, 1)";
+      for (const p of draftPolygon) {
+        ctx.beginPath();
+        ctx.arc(sx(p.x), sy(p.y), 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Draw entry point
+    if (state.entryPoint) {
+      const ex = sx(state.entryPoint.x);
+      const ey = sy(state.entryPoint.y);
+      ctx.fillStyle = "#3b82f6";
+      ctx.beginPath();
+      ctx.arc(ex, ey, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.font = "10px sans-serif";
+      ctx.fillStyle = "#fff";
+      ctx.fillText("ENTRY", ex, ey - 10);
+    }
   });
 
   return (
@@ -189,7 +239,16 @@ export default function YardCanvas({
       ref={canvasRef}
       width={width}
       height={height}
-      className="block w-full h-auto rounded-md border border-border bg-[#0a0e14]"
+      className={`block w-full h-auto rounded-md border border-border bg-[#0a0e14] ${onCanvasClick ? "cursor-crosshair" : ""}`}
+      onClick={(e) => {
+        if (!onCanvasClick) return;
+        const rect = canvasRef.current!.getBoundingClientRect();
+        const cx = e.clientX - rect.left;
+        const cy = e.clientY - rect.top;
+        const gx = (cx / rect.width) * GRID;
+        const gy = GRID - 1 - (cy / rect.height) * GRID;
+        onCanvasClick(gx, gy);
+      }}
     />
   );
 }

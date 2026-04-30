@@ -20,6 +20,17 @@ export default function Dashboard() {
   const sim = useSimulation();
   const [showFrontier, setShowFrontier] = useState(true);
   const [showTargets, setShowTargets] = useState(true);
+  const [editMode, setEditMode] = useState<"none" | "map" | "entry">("none");
+  const [draftPolygon, setDraftPolygon] = useState<{x: number, y: number}[]>([]);
+
+  const handleCanvasClick = (gx: number, gy: number) => {
+    if (editMode === "map") {
+      setDraftPolygon(prev => [...prev, {x: gx, y: gy}]);
+    } else if (editMode === "entry") {
+      sim.updateConfig({ entryPoint: {x: gx, y: gy} });
+      setEditMode("none");
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -159,6 +170,52 @@ export default function Dashboard() {
 
           <section className="rounded-md border border-border bg-card/60 p-4">
             <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+              Map & Entry
+            </h2>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => {
+                  setEditMode(editMode === "map" ? "none" : "map");
+                  if (editMode !== "map") setDraftPolygon([]);
+                }}
+                className={`rounded-md border px-3 py-2 text-sm font-medium transition ${
+                  editMode === "map" ? "border-[hsl(var(--cat-yellow))] bg-[hsl(var(--cat-yellow))]/10" : "border-border bg-secondary hover:bg-secondary/80"
+                }`}
+              >
+                {editMode === "map" ? "Cancel Map Edit" : "Edit Map Shape"}
+              </button>
+              {editMode === "map" && draftPolygon.length > 0 && (
+                <button
+                  onClick={() => {
+                    if (draftPolygon.length >= 3) {
+                      sim.updateConfig({ polygon: draftPolygon });
+                    }
+                    setEditMode("none");
+                    setDraftPolygon([]);
+                  }}
+                  className="rounded-md bg-green-600 px-3 py-2 text-sm font-semibold text-white hover:bg-green-500 transition"
+                >
+                  Save New Map
+                </button>
+              )}
+              <button
+                onClick={() => setEditMode(editMode === "entry" ? "none" : "entry")}
+                className={`rounded-md border px-3 py-2 text-sm font-medium transition ${
+                  editMode === "entry" ? "border-blue-500 bg-blue-500/10" : "border-border bg-secondary hover:bg-secondary/80"
+                }`}
+              >
+                {editMode === "entry" ? "Cancel Entry Edit" : "Change Entry Point"}
+              </button>
+            </div>
+            {editMode !== "none" && (
+               <p className="mt-2 text-xs text-muted-foreground text-[hsl(var(--cat-yellow))] font-semibold">
+                 Click on the canvas to {editMode === "map" ? "draw map points (save when done)" : "set entry point"}.
+               </p>
+            )}
+          </section>
+
+          <section className="rounded-md border border-border bg-card/60 p-4">
+            <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
               Overlays
             </h2>
             <label className="mb-2 flex items-center gap-2 text-sm">
@@ -189,6 +246,8 @@ export default function Dashboard() {
             showTargets={showTargets}
             width={760}
             height={760}
+            draftPolygon={editMode === "map" ? draftPolygon : undefined}
+            onCanvasClick={handleCanvasClick}
           />
         </section>
 

@@ -61,6 +61,20 @@ export interface SimState {
   tick: number;
   totalVolume: number;
   log: { t: number; msg: string }[];
+  polygon: {x: number, y: number}[];
+  entryPoint: {x: number, y: number};
+}
+
+export function pointInPolygon(point: {x: number, y: number}, vs: {x: number, y: number}[]) {
+  let x = point.x, y = point.y;
+  let inside = false;
+  for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+    let xi = vs[i].x, yi = vs[i].y;
+    let xj = vs[j].x, yj = vs[j].y;
+    let intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
 }
 
 export const idx = (x: number, y: number) => y * GRID + x;
@@ -82,7 +96,13 @@ export function jitter(value: number, spread: number, min?: number, max?: number
   return clamp(next, min, max);
 }
 
-export function createState(numTrucks: number, material: Material, loadVolume: number): SimState {
+export function createState(
+  numTrucks: number, 
+  material: Material, 
+  loadVolume: number,
+  polygon: {x: number, y: number}[],
+  entryPoint: {x: number, y: number}
+): SimState {
   const H = new Float32Array(GRID * GRID);
   const Hmeas = new Float32Array(GRID * GRID);
   const occupancy = new Float32Array(OCC_GRID * OCC_GRID);
@@ -103,7 +123,7 @@ export function createState(numTrucks: number, material: Material, loadVolume: n
       plannedDump: null,
     });
   }
-  return { H, Hmeas, occupancy, frontier, dumps: [], trucks, tick: 0, totalVolume: 0, log: [] };
+  return { H, Hmeas, occupancy, frontier, dumps: [], trucks, tick: 0, totalVolume: 0, log: [], polygon, entryPoint };
 }
 
 export function lidarScan(state: SimState) {
@@ -243,13 +263,14 @@ export function decideDump(
   const base = pileParams(material, loadVolume);
   const angle = -Math.PI / 3;
 
-  // Use base unjittered dimensions to ensure the grid is static across calls
-  const left = YARD_LEFT_M / CELL + base.rx + 2;
-  const right = YARD_RIGHT_M / CELL - base.rx - 2;
-  const top = YARD_TOP_M / CELL + base.ry + 2;
-  const bottom = YARD_BOTTOM_M / CELL - base.ry - 2;
+  const xs = state.polygon.map(p => p.x);
+  const ys = state.polygon.map(p => p.y);
+  const left = Math.min(...xs) + base.rx + 2;
+  const right = Math.max(...xs) - base.rx - 2;
+  const top = Math.min(...ys) + base.ry + 2;
+  const bottom = Math.max(...ys) - base.ry - 2;
   const slotIndex = nextColumnSlotIndex(state);
-  const slots = buildColumnSlots(left, right, top, bottom, base.rx, base.ry, gapDistance);
+  const slots = buildColumnSlots(left, right, top, bottom, base.rx, base.ry, gapDistance, state.polygon, state.entryPoint);
   const chosen = chooseColumnSlot(state, slots, slotIndex);
 
   // Apply jitter to the actual placed pile dimensions with a larger fraction (up to 20%) for noticeable non-identical dumps
@@ -276,6 +297,8 @@ function buildColumnSlots(
   rx: number,
   ry: number,
   gapDistance: number,
+  polygon: {x: number, y: number}[],
+  entryPoint: {x: number, y: number}
 ) {
   const slots: ColumnSlot[] = [];
   const xStep = Math.max(rx * 1.15 * gapDistance, 5.0);
@@ -297,14 +320,26 @@ function buildColumnSlots(
       const cx = baseCx - curveShift;
 
       if (cx >= left && cx <= right) {
-        slots.push({ cx, cy: actualCy, column, row });
+        if (pointInPolygon({x: cx, y: actualCy}, polygon)) {
+          slots.push({ cx, cy: actualCy, column, row });
+        }
       }
     }
   }
 
+  const dxLeft = Math.abs(left - entryPoint.x);
+  const dxRight = Math.abs(right - entryPoint.x);
+  const startFromRight = dxRight >= dxLeft;
+
+  const dyTop = Math.abs(top - entryPoint.y);
+  const dyBottom = Math.abs(bottom - entryPoint.y);
+  const startFromBottom = dyBottom >= dyTop;
+
   slots.sort((a, b) => {
-    if (a.column !== b.column) return a.column - b.column;
-    return a.cy - b.cy;
+    if (a.column !== b.column) {
+      return startFromRight ? a.column - b.column : b.column - a.column;
+    }
+    return startFromBottom ? b.cy - a.cy : a.cy - b.cy;
   });
 
   return slots;

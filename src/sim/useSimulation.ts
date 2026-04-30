@@ -17,6 +17,8 @@ export interface SimConfig {
   numTrucks: number;
   speed: number; // 0.25 .. 4
   gapDistance: number; // Factor for overlapping boundaries (1.0 = normal, <1 = overlap, >1 = gap)
+  polygon: {x: number, y: number}[];
+  entryPoint: {x: number, y: number};
 }
 
 const DEFAULT: SimConfig = {
@@ -25,10 +27,16 @@ const DEFAULT: SimConfig = {
   numTrucks: 3,
   speed: 1,
   gapDistance: 1.0,
+  polygon: [
+    {x: 8 / 0.5, y: 8 / 0.5},
+    {x: 92 / 0.5, y: 8 / 0.5},
+    {x: 92 / 0.5, y: 92 / 0.5},
+    {x: 8 / 0.5, y: 92 / 0.5}
+  ],
+  entryPoint: {x: -8, y: 100}
 };
 
-// Approach point (off-grid left side)
-const ENTRY_X = -8;
+// We use entryPoint from state instead of hardcoded
 
 function pickIdleTruck(trucks: Truck[]) {
   return trucks.find((t) => t.state === "idle");
@@ -38,7 +46,7 @@ export function useSimulation() {
   const [config, setConfig] = useState<SimConfig>(DEFAULT);
   const [running, setRunning] = useState(false);
   const stateRef = useRef<SimState>(
-    createState(DEFAULT.numTrucks, DEFAULT.material, DEFAULT.loadVolume),
+    createState(DEFAULT.numTrucks, DEFAULT.material, DEFAULT.loadVolume, DEFAULT.polygon, DEFAULT.entryPoint),
   );
   const [, force] = useState(0);
   const rerender = useCallback(() => force((n) => n + 1), []);
@@ -47,7 +55,7 @@ export function useSimulation() {
     (cfg?: Partial<SimConfig>) => {
       const next = { ...config, ...(cfg ?? {}) };
       setConfig(next);
-      stateRef.current = createState(next.numTrucks, next.material, next.loadVolume);
+      stateRef.current = createState(next.numTrucks, next.material, next.loadVolume, next.polygon, next.entryPoint);
       setRunning(false);
       rerender();
     },
@@ -59,8 +67,12 @@ export function useSimulation() {
       setConfig((c) => {
         const next = { ...c, ...patch };
         // if structural change, reset
-        if (patch.numTrucks !== undefined && patch.numTrucks !== c.numTrucks) {
-          stateRef.current = createState(next.numTrucks, next.material, next.loadVolume);
+        if (
+          (patch.numTrucks !== undefined && patch.numTrucks !== c.numTrucks) ||
+          patch.polygon !== undefined ||
+          patch.entryPoint !== undefined
+        ) {
+          stateRef.current = createState(next.numTrucks, next.material, next.loadVolume, next.polygon, next.entryPoint);
         } else {
           // update truck material/load on the fly
           stateRef.current.trucks.forEach((t) => {
@@ -87,7 +99,8 @@ export function useSimulation() {
           if (Math.random() < 0.5) {
             const dec = decideDump(s, truck.material, truck.loadVolume, truck.id, config.gapDistance);
             truck.state = "approaching";
-            truck.x = ENTRY_X;
+            truck.x = s.entryPoint.x;
+            truck.y = s.entryPoint.y;
             truck.progress = 0;
             truck.plannedDump = dec;
             truck.targetX = dec.cx;
@@ -98,8 +111,8 @@ export function useSimulation() {
         }
         case "approaching": {
           truck.progress += 0.04 * config.speed;
-          truck.x = ENTRY_X + (truck.targetX - ENTRY_X) * truck.progress;
-          truck.y = truck.y + (truck.targetY - truck.y) * 0.08 * config.speed;
+          truck.x = s.entryPoint.x + (truck.targetX - s.entryPoint.x) * truck.progress;
+          truck.y = s.entryPoint.y + (truck.targetY - s.entryPoint.y) * truck.progress;
           if (truck.progress >= 1) {
             truck.state = "scanning";
             truck.progress = 0;
@@ -155,11 +168,12 @@ export function useSimulation() {
         }
         case "leaving": {
           truck.progress += 0.05 * config.speed;
-          truck.x = truck.targetX + (ENTRY_X - truck.targetX) * truck.progress;
+          truck.x = truck.targetX + (s.entryPoint.x - truck.targetX) * truck.progress;
+          truck.y = truck.targetY + (s.entryPoint.y - truck.targetY) * truck.progress;
           if (truck.progress >= 1) {
             truck.state = "idle";
-            truck.x = ENTRY_X;
-            truck.y = 20 + (truck.id - 1) * 25;
+            truck.x = s.entryPoint.x;
+            truck.y = s.entryPoint.y;
             truck.progress = 0;
             truck.plannedDump = null;
           }
