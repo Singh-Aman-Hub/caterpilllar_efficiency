@@ -160,14 +160,14 @@ export function slopeAt(state: SimState, x: number, y: number): number {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-export function pileParams(material: Material, loadVolume: number) {
+export function pileParams(material: Material, loadVolume: number, ellipseRatio: number = 0.72) {
   const p = MATERIAL_PARAMS[material];
   const cube = Math.cbrt(loadVolume);
   // Smaller, tighter elliptical dumps for crisscross packing.
   const rxMetres = p.k * cube * p.matFactor * 0.55;
   const peak = Math.min(MAX_H, p.peakFactor * cube * 1.25);
   const rx = rxMetres / CELL;
-  const ry = rx * 0.72;
+  const ry = rx * ellipseRatio;
   return { rx, ry, peak };
 }
 
@@ -246,6 +246,7 @@ export interface DumpDecision {
   angle: number;
   peak: number;
   reason: string;
+  slotKey?: string;
 }
 
 const YARD_LEFT_M = 8;
@@ -259,9 +260,12 @@ export function decideDump(
   loadVolume: number,
   truckId: number,
   gapDistance: number = 1.0,
+  partitions: number | "auto" = "auto",
+  dumpAngle: number = 0,
+  ellipseRatio: number = 0.72
 ): DumpDecision {
-  const base = pileParams(material, loadVolume);
-  const angle = -Math.PI / 3;
+  const base = pileParams(material, loadVolume, ellipseRatio);
+  const angle = (dumpAngle * Math.PI) / 180;
 
   const xs = state.polygon.map(p => p.x);
   const ys = state.polygon.map(p => p.y);
@@ -269,22 +273,124 @@ export function decideDump(
   const right = Math.max(...xs) - base.rx - 2;
   const top = Math.min(...ys) + base.ry + 2;
   const bottom = Math.max(...ys) - base.ry - 2;
-  const slotIndex = nextColumnSlotIndex(state);
-  const slots = buildColumnSlots(left, right, top, bottom, base.rx, base.ry, gapDistance, state.polygon, state.entryPoint);
-  const chosen = chooseColumnSlot(state, slots, slotIndex);
 
-  // Apply jitter to the actual placed pile dimensions with a larger fraction (up to 20%) for noticeable non-identical dumps
-  const rx = jitter(base.rx, 0.20, base.rx * 0.8, base.rx * 1.25);
-  const ry = jitter(base.ry, 0.20, base.ry * 0.8, base.ry * 1.25);
+  const slots = buildColumnSlots(left, right, top, bottom, base.rx, base.ry, gapDistance, state.polygon, state.entryPoint, dumpAngle);
+
+  const takenSlots = new Set<string>();
+  for (const d of state.dumps) takenSlots.add(`${d.cx.toFixed(3)},${d.cy.toFixed(3)}`);
+  for (const t of state.trucks) {
+    if (t.plannedDump && t.plannedDump.slotKey) {
+      takenSlots.add(t.plannedDump.slotKey);
+    }
+  }
+
+  const availableSlots = slots.filter(s => {
+    const key = `${s.cx.toFixed(3)},${s.cy.toFixed(3)}`;
+    return !takenSlots.has(key) && isSlotAvailable(state, s.cx, s.cy);
+  });
+
+  let chosen: ColumnSlot | undefined;
+  let P = 1;
+
+  if (availableSlots.length > 0) {
+    const activeColumnId = availableSlots[0].column;
+    const availableInActive = availableSlots.filter(s => s.column === activeColumnId);
+    const totalInActive = slots.filter(s => s.column === activeColumnId);
+
+    if (partitions === "auto") {
+      P = Math.min(state.trucks.length, Math.max(1, Math.floor(totalInActive.length / 3)));
+    } else {
+      P = partitions;
+    }
+    P = Math.max(1, P);
+
+    const partitionIndex = (truckId - 1) % P;
+    const partitionSize = Math.ceil(totalInActive.length / P);
+    const startIndex = partitionIndex * partitionSize;
+    const endIndex = startIndex + partitionSize;
+
+    const preferredTotal = totalInActive.slice(startIndex, endIndex);
+    chosen = preferredTotal.find(s => availableInActive.includes(s));
+
+    if (!chosen) {
+      chosen = availableInActive[0];
+    }
+  }
+
+  if (!chosen) {
+    chosen = { cx: rightFallback(state), cy: topFallback(state), column: 0, row: 0 };
+  }
+
+  const rx = jitter(base.rx, 0.15, base.rx * 0.85, base.rx * 1.15);
+  const baseRy = rx * ellipseRatio;
+  const ry = jitter(baseRy, 0.05, baseRy * 0.95, baseRy * 1.05);
   const peak = jitter(base.peak, 0.15, base.peak * 0.85, base.peak * 1.20);
+  const slotKey = `${chosen.cx.toFixed(3)},${chosen.cy.toFixed(3)}`;
 
-  const reason = `T${truckId}: column ${chosen.column + 1} row ${chosen.row + 1} @ (${(chosen.cx * CELL).toFixed(1)}m, ${(chosen.cy * CELL).toFixed(1)}m)`;
-  return { cx: chosen.cx, cy: chosen.cy, rx, ry, angle, peak, reason };
+  const reason = `T${truckId}: col ${chosen.column + 1} partition ${(truckId - 1) % P + 1} @ (${(chosen.cx * CELL).toFixed(1)}m, ${(chosen.cy * CELL).toFixed(1)}m)`;
+  return { cx: chosen.cx, cy: chosen.cy, rx, ry, angle, peak, reason, slotKey };
 }
 
-function nextColumnSlotIndex(state: SimState) {
-  const reserved = state.trucks.reduce((count, truck) => count + (truck.plannedDump ? 1 : 0), 0);
-  return state.dumps.length + reserved;
+export function getActivePartitions(
+  state: SimState,
+  material: Material,
+  loadVolume: number,
+  gapDistance: number = 1.0,
+  partitions: number | "auto" = "auto",
+  dumpAngle: number = 0,
+  ellipseRatio: number = 0.72
+) {
+  const base = pileParams(material, loadVolume, ellipseRatio);
+  const xs = state.polygon.map(p => p.x);
+  const ys = state.polygon.map(p => p.y);
+  if (xs.length === 0 || ys.length === 0) return [];
+  const left = Math.min(...xs) + base.rx + 2;
+  const right = Math.max(...xs) - base.rx - 2;
+  const top = Math.min(...ys) + base.ry + 2;
+  const bottom = Math.max(...ys) - base.ry - 2;
+
+  const slots = buildColumnSlots(left, right, top, bottom, base.rx, base.ry, gapDistance, state.polygon, state.entryPoint, dumpAngle);
+
+  const takenSlots = new Set<string>();
+  for (const d of state.dumps) takenSlots.add(`${d.cx.toFixed(3)},${d.cy.toFixed(3)}`);
+  for (const t of state.trucks) {
+    if (t.plannedDump && t.plannedDump.slotKey) {
+      takenSlots.add(t.plannedDump.slotKey);
+    }
+  }
+
+  const availableSlots = slots.filter(s => {
+    const key = `${s.cx.toFixed(3)},${s.cy.toFixed(3)}`;
+    return !takenSlots.has(key) && isSlotAvailable(state, s.cx, s.cy);
+  });
+
+  if (availableSlots.length === 0) return [];
+
+  const activeColumnId = availableSlots[0].column;
+  const totalInActive = slots.filter(s => s.column === activeColumnId);
+
+  let P = 1;
+  if (partitions === "auto") {
+    P = Math.min(state.trucks.length, Math.max(1, Math.floor(totalInActive.length / 3)));
+  } else {
+    P = partitions;
+  }
+  P = Math.max(1, P);
+
+  const partitionSize = Math.ceil(totalInActive.length / P);
+  const partitionLines: { x1: number, y1: number, x2: number, y2: number }[] = [];
+
+  for (let i = 1; i < P; i++) {
+    const splitIndex = i * partitionSize;
+    if (splitIndex < totalInActive.length) {
+      const slotBefore = totalInActive[splitIndex - 1];
+      const slotAfter = totalInActive[splitIndex];
+      const midCy = (slotBefore.cy + slotAfter.cy) / 2;
+      const midCx = (slotBefore.cx + slotAfter.cx) / 2;
+      partitionLines.push({ x1: midCx - base.rx * 2, y1: midCy, x2: midCx + base.rx * 2, y2: midCy });
+    }
+  }
+  return partitionLines;
 }
 
 type ColumnSlot = { cx: number; cy: number; column: number; row: number };
@@ -298,11 +404,17 @@ function buildColumnSlots(
   ry: number,
   gapDistance: number,
   polygon: {x: number, y: number}[],
-  entryPoint: {x: number, y: number}
+  entryPoint: {x: number, y: number},
+  dumpAngle: number = 0
 ) {
   const slots: ColumnSlot[] = [];
-  const xStep = Math.max(rx * 1.15 * gapDistance, 5.0);
-  const yStep = Math.max(ry * 1.4 * gapDistance, 4.0);
+  const angleRad = (dumpAngle * Math.PI) / 180;
+  const cos = Math.abs(Math.cos(angleRad));
+  const sin = Math.abs(Math.sin(angleRad));
+  const projX = rx * cos + ry * sin;
+  const projY = rx * sin + ry * cos;
+  const xStep = Math.max(projX * 1.15 * gapDistance, 5.0);
+  const yStep = Math.max(projY * 1.4 * gapDistance, 4.0);
   const midY = (top + bottom) / 2;
 
   let column = 0;
@@ -345,18 +457,7 @@ function buildColumnSlots(
   return slots;
 }
 
-function chooseColumnSlot(state: SimState, slots: ColumnSlot[], startIndex: number) {
-  if (slots.length === 0) {
-    return {
-      cx: rightFallback(state),
-      cy: topFallback(state),
-      column: 0,
-      row: 0,
-    };
-  }
-  // Strictly assign exactly one dump per slot to avoid repetitive overlapping
-  return slots[startIndex % slots.length];
-}
+
 
 function isSlotAvailable(state: SimState, cx: number, cy: number) {
   const ix = clamp(Math.round(cx), 0, GRID - 1);

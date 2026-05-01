@@ -166,6 +166,47 @@ export default function Dashboard() {
                 className="mt-1 w-full accent-[hsl(var(--cat-yellow))]"
               />
             </div>
+            <div className="mt-3">
+              <label className="text-xs text-muted-foreground">
+                Row Partitions: <span className="font-mono">{sim.config.partitions === "auto" ? "Auto" : sim.config.partitions}</span>
+              </label>
+              <select
+                value={sim.config.partitions}
+                onChange={(e) => sim.updateConfig({ partitions: e.target.value === "auto" ? "auto" : parseInt(e.target.value) })}
+                className="mt-1 w-full rounded-md border border-border bg-secondary/40 px-2 py-1 text-xs"
+              >
+                <option value="auto">Auto (Match Fleet)</option>
+                <option value={1}>1 Partition (Sequence)</option>
+                <option value={2}>2 Partitions</option>
+                <option value={3}>3 Partitions</option>
+                <option value={4}>4 Partitions</option>
+                <option value={5}>5 Partitions</option>
+              </select>
+            </div>
+            <div className="mt-3">
+              <label className="text-xs text-muted-foreground flex justify-between">
+                <span>Dump Angle:</span>
+                <span className="font-mono">{sim.config.dumpAngle}°</span>
+              </label>
+              <input
+                type="range" min={-90} max={90} step={5}
+                value={sim.config.dumpAngle}
+                onChange={(e) => sim.updateConfig({ dumpAngle: parseInt(e.target.value) })}
+                className="mt-1 w-full accent-[hsl(var(--cat-yellow))]"
+              />
+            </div>
+            <div className="mt-3">
+              <label className="text-xs text-muted-foreground flex justify-between">
+                <span>Ellipse Ratio (ry/rx):</span>
+                <span className="font-mono">{sim.config.ellipseRatio.toFixed(2)}</span>
+              </label>
+              <input
+                type="range" min={0.3} max={1.0} step={0.01}
+                value={sim.config.ellipseRatio}
+                onChange={(e) => sim.updateConfig({ ellipseRatio: parseFloat(e.target.value) })}
+                className="mt-1 w-full accent-[hsl(var(--cat-yellow))]"
+              />
+            </div>
           </section>
 
           <section className="rounded-md border border-border bg-card/60 p-4">
@@ -242,6 +283,7 @@ export default function Dashboard() {
           </div>
           <YardCanvas
             state={sim.state}
+            config={sim.config}
             showFrontier={showFrontier}
             showTargets={showTargets}
             width={760}

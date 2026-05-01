@@ -1,13 +1,15 @@
 import { useEffect, useRef } from "react";
-import { GRID, MAX_H, SimState, MATERIAL_PARAMS } from "@/sim/engine";
+import { GRID, MAX_H, SimState, MATERIAL_PARAMS, getActivePartitions } from "@/sim/engine";
+import { SimConfig } from "@/sim/useSimulation";
 
 interface Props {
   state: SimState;
+  config: SimConfig;
   width?: number;
   height?: number;
   showFrontier: boolean;
   showTargets: boolean;
-  draftPolygon?: {x: number, y: number}[];
+  draftPolygon?: { x: number, y: number }[];
   onCanvasClick?: (gx: number, gy: number) => void;
 }
 
@@ -41,6 +43,7 @@ function heightColor(h: number): [number, number, number] {
 
 export default function YardCanvas({
   state,
+  config,
   width = 600,
   height = 600,
   showFrontier,
@@ -99,7 +102,7 @@ export default function YardCanvas({
 
     // dump markers
     if (showTargets) {
-      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.17)";
       ctx.lineWidth = 1;
       for (const d of state.dumps) {
         ctx.beginPath();
@@ -108,7 +111,7 @@ export default function YardCanvas({
           sy(d.cy),
           (d.rx / GRID) * width,
           (d.ry / GRID) * height,
-          d.angle ?? 0,
+          -(d.angle ?? 0),
           0,
           Math.PI * 2,
         );
@@ -188,7 +191,7 @@ export default function YardCanvas({
     ctx.strokeRect(0.5, 0.5, width - 1, height - 1);
 
     // Draw polygons
-    const drawPoly = (poly: {x: number, y: number}[], strokeStyle: string, fillStyle: string) => {
+    const drawPoly = (poly: { x: number, y: number }[], strokeStyle: string, fillStyle: string) => {
       if (!poly || poly.length === 0) return;
       ctx.strokeStyle = strokeStyle;
       ctx.lineWidth = 2;
@@ -231,6 +234,21 @@ export default function YardCanvas({
       ctx.font = "10px sans-serif";
       ctx.fillStyle = "#fff";
       ctx.fillText("ENTRY", ex, ey - 10);
+    }
+
+    // Draw active partitions
+    const pLines = getActivePartitions(state, config.material, config.loadVolume, config.gapDistance, config.partitions, config.dumpAngle, config.ellipseRatio);
+    if (pLines.length > 0) {
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.7)";
+      ctx.lineWidth = 3;
+      ctx.setLineDash([4, 4]);
+      for (const line of pLines) {
+        ctx.beginPath();
+        ctx.moveTo(sx(line.x1), sy(line.y1));
+        ctx.lineTo(sx(line.x2), sy(line.y2));
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
     }
   });
 

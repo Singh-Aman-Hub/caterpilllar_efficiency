@@ -17,6 +17,9 @@ export interface SimConfig {
   numTrucks: number;
   speed: number; // 0.25 .. 4
   gapDistance: number; // Factor for overlapping boundaries (1.0 = normal, <1 = overlap, >1 = gap)
+  partitions: number | "auto";
+  dumpAngle: number; // Angle of the dump ellipse in degrees
+  ellipseRatio: number; // Ratio of ry / rx
   polygon: {x: number, y: number}[];
   entryPoint: {x: number, y: number};
 }
@@ -27,6 +30,9 @@ const DEFAULT: SimConfig = {
   numTrucks: 3,
   speed: 1,
   gapDistance: 1.0,
+  partitions: "auto",
+  dumpAngle: 0,
+  ellipseRatio: 0.72,
   polygon: [
     {x: 8 / 0.5, y: 8 / 0.5},
     {x: 92 / 0.5, y: 8 / 0.5},
@@ -97,7 +103,7 @@ export function useSimulation() {
         case "idle": {
           // dispatch with small staggered chance
           if (Math.random() < 0.5) {
-            const dec = decideDump(s, truck.material, truck.loadVolume, truck.id, config.gapDistance);
+            const dec = decideDump(s, truck.material, truck.loadVolume, truck.id, config.gapDistance, config.partitions, config.dumpAngle, config.ellipseRatio);
             truck.state = "approaching";
             truck.x = s.entryPoint.x;
             truck.y = s.entryPoint.y;
@@ -136,8 +142,12 @@ export function useSimulation() {
         case "dumping": {
           truck.progress += 0.06 * config.speed;
           if (truck.progress >= 1) {
-            const dec =
-              truck.plannedDump ?? decideDump(s, truck.material, truck.loadVolume, truck.id, config.gapDistance);
+            let dec = truck.plannedDump;
+            if (dec) {
+              dec.angle = (config.dumpAngle * Math.PI) / 180;
+            } else {
+              dec = decideDump(s, truck.material, truck.loadVolume, truck.id, config.gapDistance, config.partitions, config.dumpAngle, config.ellipseRatio);
+            }
             applyDump(s, dec.cx, dec.cy, dec.rx, dec.ry, dec.peak, dec.angle);
             s.dumps.push({
               id: s.dumps.length + 1,
@@ -181,7 +191,7 @@ export function useSimulation() {
         }
       }
     }
-  }, [config.speed, config.gapDistance]);
+  }, [config]);
 
   // animation loop
   useEffect(() => {
